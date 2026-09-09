@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package*.json ./
+COPY patch-wwebjs.js ./
 RUN npm install
 
 COPY . .
