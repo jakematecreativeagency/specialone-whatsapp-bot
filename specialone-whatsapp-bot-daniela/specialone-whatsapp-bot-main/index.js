@@ -21,6 +21,7 @@ const conversations = new Map();
 const pausedChats = new Map();
 const botSentMessages = new Map();
 const recentBotBodies = new Map();
+const activationGraceUntil = new Map();
 
 const CEO_NUMBERS = [
   '34637993550@c.us',
@@ -103,18 +104,38 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function humanDelay(text) {
-  const length = (text || '').length;
-  const base = 2500;
-  const extra = Math.min(length * 25, 5500);
-  return base + extra + Math.floor(Math.random() * 1200);
-}
-
 function normalizeText(text) {
   return (text || '')
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
+}
+
+function humanDelay(text) {
+  const length = (text || '').length;
+  const base = 900;
+  const extra = Math.min(length * 16, 2600);
+  return base + extra + Math.floor(Math.random() * 900);
+}
+
+function splitDanielaMessages(text) {
+  const clean = (text || '').replace(/\r/g, '').trim();
+
+  if (!clean) return [];
+
+  return clean
+    .split(/\n{2,}/)
+    .flatMap(block => {
+      if (block.length <= 115) return [block];
+
+      return block
+        .split(/(?<=[.!?])\s+/)
+        .map(part => part.trim())
+        .filter(Boolean);
+    })
+    .map(part => part.trim())
+    .filter(Boolean)
+    .slice(0, 5);
 }
 
 function normalizePhone(raw) {
@@ -135,6 +156,20 @@ function pauseChat(chatId, hours = 2) {
 
 function activateChat(chatId) {
   pausedChats.delete(chatId);
+  activationGraceUntil.set(chatId, Date.now() + 45000);
+}
+
+function isActivationGrace(chatId) {
+  const until = activationGraceUntil.get(chatId);
+
+  if (!until) return false;
+
+  if (Date.now() > until) {
+    activationGraceUntil.delete(chatId);
+    return false;
+  }
+
+  return true;
 }
 
 function isPaused(chatId) {
@@ -153,14 +188,14 @@ function isPaused(chatId) {
 function markBotMessage(chatId, body) {
   botSentMessages.set(chatId, Date.now());
 
-  if (body) {
-    const key = normalizeText(body).slice(0, 180);
-    recentBotBodies.set(key, Date.now());
+  if (!body) return;
 
-    setTimeout(() => {
-      recentBotBodies.delete(key);
-    }, 90000);
-  }
+  const key = normalizeText(body).slice(0, 180);
+  recentBotBodies.set(key, Date.now());
+
+  setTimeout(() => {
+    recentBotBodies.delete(key);
+  }, 90000);
 }
 
 function wasRecentlySentByBot(chatId, body) {
@@ -173,44 +208,75 @@ function wasRecentlySentByBot(chatId, body) {
   return Boolean(bodyTime && Date.now() - bodyTime < 90000);
 }
 
-async function sendDanielaMessage(chatId, text) {
+async function sendRawMessage(chatId, text) {
   markBotMessage(chatId, text);
   await client.sendMessage(chatId, text);
+}
+
+async function sendDanielaMessage(chatId, text) {
+  const parts = splitDanielaMessages(text);
+
+  for (const part of parts) {
+    await sendRawMessage(chatId, part);
+    await sleep(600 + Math.floor(Math.random() * 800));
+  }
 }
 
 function getFlyerPath() {
   return FLYER_PATHS.find(filePath => fs.existsSync(filePath));
 }
 
+function asksForFlyer(text) {
+  const t = normalizeText(text);
+
+  return (
+    t.includes('cartel') ||
+    t.includes('imagen') ||
+    t.includes('foto') ||
+    t.includes('flyer') ||
+    t.includes('infografia') ||
+    t.includes('infografía')
+  );
+}
+
 function shouldSendFlyer(text) {
   const t = normalizeText(text);
 
   return (
+    asksForFlyer(text) ||
+    t.includes('domingos') ||
     t.includes('domingo') ||
     t.includes('tecnificacion') ||
     t.includes('tecnificación') ||
     t.includes('horario') ||
     t.includes('precio') ||
     t.includes('tarifa') ||
-    t.includes('cartel') ||
-    t.includes('info') ||
     t.includes('informacion') ||
     t.includes('información')
   );
 }
 
 async function sendFlyerIfUseful(chatId, text) {
+  if (!shouldSendFlyer(text)) return false;
+
   const flyerPath = getFlyerPath();
 
-  if (!flyerPath || !shouldSendFlyer(text)) return;
+  if (!flyerPath) {
+    console.log('Cartel no encontrado. Sube domingos-tecnificacion.jpg junto a index.js');
+    return false;
+  }
 
   try {
     const media = MessageMedia.fromFilePath(flyerPath);
     await client.sendMessage(chatId, media, {
-      caption: 'Le paso también el cartel de Domingos de Tecnificación para que tenga la información a mano 😊'
+      caption: asksForFlyer(text)
+        ? 'Claro, le paso el cartel.'
+        : 'Le paso también el cartel por si le ayuda.'
     });
+    return true;
   } catch (error) {
     console.error('No se pudo enviar cartel:', error?.stack || error?.message || error);
+    return false;
   }
 }
 
@@ -259,9 +325,11 @@ function shouldAlertCEO(text) {
     t.includes('otra persona') ||
     t.includes('audio') ||
     t.includes('nota de voz') ||
-    t.includes('club') && t.includes('acuerdo') ||
+    (t.includes('club') && t.includes('acuerdo')) ||
     t.includes('colaboracion') ||
-    t.includes('colaboración')
+    t.includes('colaboración') ||
+    t.includes('prensa') ||
+    t.includes('legal')
   );
 }
 
@@ -269,41 +337,57 @@ function basicFallback(text) {
   const t = normalizeText(text);
 
   if (isEnglish(text)) {
-    return 'Hi 😊 This is Daniela from Special One Academy.\n\nI can help you with our technical training sessions, schedules, location or registration.\n\nWhat would you like to know?';
+    return 'Hi.\n\nThis is Daniela from Special One Academy.\n\nI can help you with training, schedules, prices or registration.';
   }
 
-  if (t.includes('hola') || t.includes('buenas') || t.includes('disponible')) {
-    return 'Buenas 😊 Soy Daniela de Special One Academy.\n\nSí, dígame. ¿En qué puedo ayudarle?';
+  if (asksForFlyer(text)) {
+    return 'Sí, se lo paso ahora.';
+  }
+
+  if (t.includes('hola') || t.includes('buenas')) {
+    return 'Buenas.\n\nSoy Daniela, de Special One Academy.\n\n¿En qué puedo ayudarle?';
   }
 
   if (t.includes('precio') || t.includes('cuanto') || t.includes('cuánto') || t.includes('tarifa')) {
-    return 'Claro 😊 Para los Domingos de Tecnificación las tarifas son:\n\n1 sesión: 19,90 €\n2 sesiones: 34,95 €\n4 sesiones: 64,90 €\n\nLas plazas son limitadas y siempre revisamos disponibilidad antes de confirmar.';
+    return 'Domingos de Tecnificación:\n\n1 sesión: 19,90 €\n2 sesiones: 34,95 €\n4 sesiones: 64,90 €';
   }
 
   if (t.includes('horario') || t.includes('cuando') || t.includes('cuándo')) {
-    return 'Los Domingos de Tecnificación tienen tres franjas 😊\n\n09:00 a 10:00\n10:00 a 11:00\n11:00 a 12:00\n\nCada jugador entrena en la franja reservada. ¿Me dice año de nacimiento y si es jugador o portero?';
+    return 'Los domingos tenemos tres franjas:\n\n09:00 a 10:00\n10:00 a 11:00\n11:00 a 12:00';
+  }
+
+  if (t.includes('ropa') || t.includes('equipacion') || t.includes('equipación')) {
+    return 'Para tecnificación no es obligatorio comprar la ropa oficial desde el primer día.\n\nSí recomendamos tenerla para que todos vayan uniformados.\n\nSe puede adquirir en Soccerfactory, en el Polígono PISA de Mairena.';
+  }
+
+  if (t.includes('individual') || t.includes('solo') || t.includes('entrenador')) {
+    return 'Los domingos trabajamos en grupos reducidos, de 2 a 12 jugadores.\n\nLas sesiones individuales existen, pero se organizan aparte y tienen otra tarifa.';
+  }
+
+  if (t.includes('portero') || t.includes('porteros')) {
+    return 'Sí, también trabajamos con porteros.\n\nEl trabajo se adapta a su posición: blocaje, caídas, desplazamientos, juego aéreo y acciones reales.';
   }
 
   if (t.includes('ubicacion') || t.includes('ubicación') || t.includes('donde') || t.includes('dónde')) {
-    return 'Estamos en Club Río Grande, en Mairena del Aljarafe, Sevilla 😊\n\nAhí realizamos los Domingos de Tecnificación.';
+    return 'Entrenamos en Club Río Grande.\n\nEstá en Mairena del Aljarafe, Sevilla.';
   }
 
-  if (t.includes('apuntar') || t.includes('inscripcion') || t.includes('inscripción') || t.includes('formulario') || t.includes('reservar')) {
-    return 'Perfecto 😊 Antes de enviarle el formulario, necesito organizar bien la solicitud.\n\n¿Me dice el nombre del jugador, año de nacimiento y si es jugador o portero?';
+  if (t.includes('apuntar') || t.includes('inscripcion') || t.includes('inscripción') || t.includes('reservar')) {
+    return 'Perfecto.\n\nPrimero vemos qué necesita el jugador y la disponibilidad.\n\nDespués le paso el formulario para dejar la solicitud registrada.';
   }
 
   if (t.includes('domingo') || t.includes('tecnificacion') || t.includes('tecnificación')) {
-    return 'Los Domingos de Tecnificación empiezan en octubre en Club Río Grande 😊\n\nSon sesiones de 60 minutos, en grupos reducidos, centradas en la mejora técnica individual del futbolista.\n\n¿Sería para jugador o portero?';
+    return 'Sí, tenemos Domingos de Tecnificación desde octubre.\n\nSon sesiones de 60 minutos en Club Río Grande.\n\nTrabajamos en grupos reducidos, con mucho balón y correcciones individuales.';
   }
 
-  return 'Perfecto 😊 Cuénteme un poco qué necesita y le oriento.\n\n¿Busca información sobre Domingos de Tecnificación, horarios, tarifas o inscripción?';
+  return 'Perfecto.\n\nCuénteme un poco qué necesita y le oriento.';
 }
 
 async function alertCEOs({ from, userMessage, reason, aiResponse }) {
   const cleanPhone = from.replace('@c.us', '').replace('@lid', '');
 
   const alertText =
-`🚨 DANIELA - AVISO A DIRECCIÓN
+`DANIELA - AVISO A DIRECCIÓN
 
 Motivo: ${reason}
 
@@ -321,12 +405,12 @@ Para reactivar Daniela en este chat:
 Desde el WhatsApp de empresa:
 /activar
 
-Desde vuestro móvil personal al WhatsApp de empresa:
+Desde vuestro móvil personal al WhatsApp empresa:
 /activar ${cleanPhone}`;
 
   for (const ceo of CEO_NUMBERS) {
     try {
-      await sendDanielaMessage(ceo, alertText);
+      await sendRawMessage(ceo, alertText);
     } catch (error) {
       console.error(`Error avisando a CEO ${ceo}:`, error?.stack || error?.message || error);
     }
@@ -348,165 +432,161 @@ async function getDanielaResponse(from, text) {
   const english = isEnglish(text);
 
   const systemPrompt = `
-Eres Daniela, responsable de atención al cliente de Special One Academy por WhatsApp.
+Eres Daniela, atención al cliente de Special One Academy por WhatsApp.
 
-Nunca respondas como chatbot. Habla como si formaras parte del equipo de la academia.
+Hablas como una persona real del equipo. No como chatbot.
 
-Misión:
-- Resolver dudas.
-- Recomendar el programa adecuado.
-- Guiar a cada familia.
-- Ayudar a iniciar la reserva del jugador.
-- Detectar oportunidades comerciales.
-- Derivar al equipo humano solo cuando haga falta.
+Reglas de escritura:
+- Mensajes cortos.
+- Una idea por mensaje.
+- No cierres siempre con pregunta.
+- No digas "claro" o "perfecto" en cada respuesta.
+- No repitas lo que el cliente acaba de decir.
+- No hagas listas largas salvo que pidan precios u horarios.
+- No uses tono de folleto.
+- No uses frases tipo "no se trata solo de X, sino de Y".
+- No uses palabras grandilocuentes.
+- No uses "es importante destacar", "cabe mencionar" ni "vale la pena señalar".
+- No uses "crucial", "fundamental", "clave", "potenciar", "elevar", "transformador", "robusto", "panorama".
+- No termines con resumen.
+- No uses preguntas retóricas.
+- No pidas datos demasiado pronto.
+- Si el cliente solo quiere información, informa.
+- Si quiere reservar, pide datos poco a poco.
+- Como máximo una pregunta por respuesta.
+- Si tienes que decir tres cosas, separa en frases cortas.
+- No uses emojis salvo uno suave cuando encaje.
+- No digas que eres IA ni bot.
+- Si no sabes algo, dilo y deriva.
 
-Estilo:
-- Profesional, humano, cercano y organizado.
-- Español natural de España.
-- Mensajes breves, claros y útiles.
-- Máximo 80 palabras normalmente.
-- Una sola pregunta por mensaje.
-- No sueltes toda la información de golpe.
-- No digas que eres IA o bot.
-- No uses frases vacías.
-- No exageres resultados.
-- No digas que somos la mejor academia.
-- Transmite confianza y mejora individual.
+Actitud:
+Tranquila, cercana, profesional.
+No presiones.
+No intentes cerrar reserva en cada mensaje.
+Primero ayuda. Después guía.
 
 Estado actual:
-La Pre Pretemporada ha finalizado. No la vendas como programa activo.
+La Pre Pretemporada ya terminó. No la vendas como programa activo.
 
-Programa principal actual:
-DOMINGOS DE TECNIFICACIÓN 2026/27.
+Programa principal:
+Domingos de Tecnificación 2026/27.
 
-Inicio:
-Octubre.
-
-Ubicación:
-Club Río Grande, Mairena del Aljarafe, Sevilla.
-
-Destinatarios:
-Prebenjamín, benjamín, alevín, infantil, cadete y juvenil.
-Disponible para jugadores y porteros.
-
-Metodología:
-Sesiones de 60 minutos.
-Enfoque técnico.
-Se trabaja:
-- Técnica individual.
-- Correcciones personalizadas.
+Datos del programa:
+- Empieza en octubre.
+- Lugar: Club Río Grande, Mairena del Aljarafe, Sevilla.
+- Para prebenjamín, benjamín, alevín, infantil, cadete y juvenil.
+- Para jugadores y porteros.
+- Sesiones de 60 minutos.
+- Grupos reducidos.
+- Mínimo 2 jugadores.
+- Máximo 12 jugadores.
+- Enfoque técnico individual.
 - Mucho contacto con balón.
+- Correcciones personalizadas.
 - Situaciones reales de juego.
-- Técnica específica por posición.
+- Trabajo específico por posición.
 - Comprensión del juego.
-- Desarrollo individual.
 
-No lo vendas como preparación física.
+No vendas este programa como preparación física.
 No lo vendas como entrenamiento táctico colectivo.
-La prioridad es la mejora técnica individual del futbolista.
 
 Horarios:
-Domingos:
-09:00 - 10:00
-10:00 - 11:00
-11:00 - 12:00
-
-Cada jugador entrena únicamente en la franja previamente reservada.
-Nunca garantices disponibilidad.
-
-Grupos:
-Reducidos.
-Mínimo 2 jugadores.
-Máximo 12 jugadores.
-
-Beneficios:
-Más participación, más correcciones individuales, mejor aprendizaje y seguimiento más cercano.
+09:00 a 10:00
+10:00 a 11:00
+11:00 a 12:00
 
 Tarifas:
 1 sesión: 19,90 €
 2 sesiones: 34,95 €
 4 sesiones: 64,90 €
 
-Nunca modifiques precios.
-Nunca inventes promociones.
-Nunca negocies tarifas.
-
 Reservas:
-Las reservas se hacen por meses.
-Ejemplo: durante septiembre se reservan los domingos de octubre.
-También pueden realizarse hasta el día anterior si quedan plazas.
+Se reservan por meses.
 Las plazas son limitadas.
-Nunca confirmes plaza directamente.
+Nunca confirmes plaza.
+Di que comprobamos disponibilidad antes de confirmar.
 
-Cuando una familia quiera reservar, di:
-"Hemos recibido tu solicitud y comprobaremos la disponibilidad antes de confirmar tu plaza."
-
-Flujo de reserva:
-Primero conversa. No envíes el formulario directamente.
-Recopila poco a poco:
-- Nombre del jugador.
-- Año de nacimiento.
-- Jugador o portero.
-- Club actual.
-- Posición.
-- Objetivo principal.
-- Domingos que quiere asistir.
-- Horario preferido.
-- Horario alternativo si lo acepta.
-
-No pidas todo de golpe. Pide 2 o 3 datos como máximo por mensaje.
-No repitas datos que el usuario ya haya dado durante la conversación.
-
-Cuando tengas suficiente información, envía:
+Formulario:
 ${TRAINING_FORM}
 
-Explica:
-"Este formulario nos ayuda a registrar correctamente al jugador y organizar todos los grupos."
+No envíes el formulario al primer mensaje salvo que el cliente lo pida o quiera reservar claramente.
 
-Nunca digas que el formulario confirma la plaza.
+Flujo humano de reserva:
+Primero habla normal.
+Si quiere reservar, pide solo dos datos:
+"¿Es jugador o portero? ¿Y qué año de nacimiento tiene?"
+Después puedes pedir club, posición, domingos deseados y horario preferido.
+No pidas todo de golpe.
 
-Si un horario está completo:
-No pierdas la inscripción. Ofrece otro horario o lista de espera.
+Sesiones individuales:
+No confundas domingos de tecnificación con sesiones individuales.
+Los domingos son grupos reducidos de 2 a 12 jugadores.
+Las sesiones individuales existen, pero se gestionan aparte y tienen otro precio. No inventes precio.
 
-Oportunidades por posición:
-Si dicen que es delantero, portero, defensa, centrocampista o extremo, explica brevemente cómo se adapta el trabajo técnico a esa posición. No respondas genérico.
+Porteros:
+Sí hay trabajo para porteros.
+Adapta la explicación: blocaje, caídas, desplazamientos, juego aéreo, coordinación, golpeo y situaciones reales.
 
-Tipos de cliente:
-1. Nuevo jugador:
-Explica, resuelve dudas, recoge información y guía hacia la reserva.
+Ropa oficial:
+Para tecnificación no es obligatorio comprar la ropa oficial desde el primer día.
+Sí recomendamos adquirirla para que todos vayan uniformados.
+La ropa oficial se puede comprar en Soccerfactory Sevilla Aljarafe.
+Dirección pública: C/ Nobel, 6, Nave 1, Parque P.I.S.A., Mairena del Aljarafe, Sevilla.
+No inventes precios de ropa.
 
-2. Alumno habitual:
-No repitas toda la explicación. Pregunta directamente qué domingos desea reservar este mes.
+Entre semana:
+La academia está buscando un día entre semana.
+Depende de la planificación de entrenamientos del Club Río Grande y de si queda un hueco interesante.
+Todavía no hay día ni horario oficial.
+No inventes fechas.
 
-3. Programa Internacional:
-SPECIAL ONE INTERNATIONAL EXPERIENCE.
-Experiencia personalizada para futbolistas internacionales.
-Puede incluir entrenamientos individuales, entrenamientos grupales, partidos en ligas privadas no federadas, evaluación técnica final, certificado oficial y equipación necesaria.
+Si preguntan por cartel o imagen:
+No digas que no tienes cartel.
+Di algo corto como:
+"Sí, se lo paso ahora."
+El sistema enviará la imagen.
+
+Programa internacional:
+Special One International Experience.
+Para futbolistas internacionales.
+Puede incluir entrenamientos individuales, entrenamientos grupales, partidos en ligas privadas no federadas, evaluación técnica final, certificado y equipación.
 Nunca prometas pruebas, fichajes ni representación.
-Explica que el objetivo es la mejora del futbolista y vivir el fútbol español desde dentro.
 Formulario internacional: ${INTERNATIONAL_FORM}
 
-4. Clinics o eventos:
-Responde solo con información oficial publicada. No inventes fechas.
+Deriva a dirección con [[AVISAR_CEO]] si hay:
+quejas, descuentos, incidencias, acuerdos con clubes, colaboraciones, prensa, temas legales, cliente molesto o petición especial.
 
-Próximos servicios:
-La academia está organizando entrenamientos entre semana.
-Todavía no hay horarios oficiales.
-Si preguntan, responde:
-"Estamos trabajando en la organización de los grupos entre semana. En cuanto estén definidos los horarios y categorías los anunciaremos oficialmente."
+Ejemplos de tono:
 
-Cuándo derivar:
-Solo deriva si hay dudas económicas especiales, cambios fuera del funcionamiento habitual, confirmación de plazas, acuerdos con clubes, incidencias, colaboraciones, prensa o temas legales.
-En esos casos añade [[AVISAR_CEO]].
+Cliente: "Buenas tardes"
+Daniela:
+"Buenas tardes."
+"Soy Daniela, de Special One Academy."
+"¿En qué puedo ayudarle?"
 
-Si solo saludan:
-"Buenas 😊 Soy Daniela de Special One Academy.
+Cliente: "Quería informarme"
+Daniela:
+"Sí."
+"Ahora mismo tenemos abiertos los Domingos de Tecnificación."
+"Empiezan en octubre, en Club Río Grande."
 
-¿En qué puedo ayudarle?"
+Cliente: "Solo tenéis sesiones individuales?"
+Daniela:
+"No exactamente."
+"Los domingos trabajamos en grupos reducidos, de 2 a 12 jugadores."
+"Las sesiones individuales van aparte y se organizan directamente con nosotros."
 
-Objetivo final:
-Cada conversación debe terminar con un siguiente paso claro.
-El usuario debe quedar informado, acompañado, con reserva iniciada o con formulario enviado cuando proceda.
+Cliente: "Y los domingos solo?"
+Daniela:
+"De momento sí."
+"Estamos viendo también un día entre semana."
+"Pero depende de los horarios que cierre el Club Río Grande."
+
+Cliente: "La ropa es obligatoria?"
+Daniela:
+"No es obligatoria desde el primer día."
+"Sí recomendamos la ropa oficial para que todos vayan uniformados."
+"Se puede adquirir en Soccerfactory, en el Polígono PISA de Mairena."
 
 Contexto:
 Fuera de horario: ${outOfHours ? 'SÍ' : 'NO'}
@@ -521,8 +601,8 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
         ...history,
         { role: 'user', content: text }
       ],
-      temperature: 0.65,
-      max_tokens: 260
+      temperature: 0.48,
+      max_tokens: 170
     });
 
     let response = completion?.choices?.[0]?.message?.content || '';
@@ -536,7 +616,7 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
       ...history,
       { role: 'user', content: text },
       { role: 'assistant', content: response }
-    ].slice(-12));
+    ].slice(-14));
 
     return { response, escalate };
   } catch (error) {
@@ -547,7 +627,7 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
       ...history,
       { role: 'user', content: text },
       { role: 'assistant', content: response }
-    ].slice(-12));
+    ].slice(-14));
 
     return { response, escalate: shouldAlertCEO(text) };
   }
@@ -556,34 +636,34 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
 client.on('qr', async (qr) => {
   whatsappStatus = 'qr_ready';
   qrImage = await qrcode.toDataURL(qr);
-  console.log('📲 QR listo en /qr');
+  console.log('QR listo en /qr');
 });
 
 client.on('loading_screen', (percent, message) => {
-  console.log(`⏳ Cargando WhatsApp: ${percent}% - ${message}`);
+  console.log(`Cargando WhatsApp: ${percent}% - ${message}`);
 });
 
 client.on('authenticated', () => {
   whatsappStatus = 'authenticated';
-  console.log('🔐 WhatsApp autenticado correctamente');
+  console.log('WhatsApp autenticado correctamente');
 });
 
 client.on('auth_failure', (msg) => {
   whatsappStatus = 'auth_failure';
-  console.error('❌ Error de autenticación WhatsApp:', msg);
+  console.error('Error de autenticación WhatsApp:', msg);
 });
 
 client.on('ready', () => {
   whatsappStatus = 'ready';
   qrImage = '';
-  console.log('✅ DANIELA SPECIAL ONE ONLINE');
-  console.log(`✅ Daniela model: ${OPENAI_MODEL}`);
-  console.log('VERSION DANIELA DOMINGOS TECNIFICACION 2026-09-09');
+  console.log('DANIELA SPECIAL ONE ONLINE');
+  console.log(`Daniela model: ${OPENAI_MODEL}`);
+  console.log('VERSION DANIELA HUMAN SALES 2026-09-10');
 });
 
 client.on('disconnected', (reason) => {
   whatsappStatus = 'disconnected';
-  console.error('🔌 WhatsApp desconectado:', reason);
+  console.error('WhatsApp desconectado:', reason);
 });
 
 client.on('message_create', async (message) => {
@@ -595,16 +675,21 @@ client.on('message_create', async (message) => {
 
     if (!chatId) return;
 
-    if (wasRecentlySentByBot(chatId, body)) {
-      console.log(`Mensaje automático ignorado para pausa: ${chatId}`);
+    const cleanBody = normalizeText(body);
+
+    if (cleanBody.startsWith('/activar')) {
+      activateChat(chatId);
+      console.log(`Chat reactivado manualmente desde empresa: ${chatId}`);
       return;
     }
 
-    const cleanBody = normalizeText(body);
+    if (isActivationGrace(chatId)) {
+      console.log(`Mensaje ignorado por ventana de activación: ${chatId}`);
+      return;
+    }
 
-    if (cleanBody === '/activar') {
-      activateChat(chatId);
-      console.log(`Chat reactivado manualmente desde empresa: ${chatId}`);
+    if (wasRecentlySentByBot(chatId, body)) {
+      console.log(`Mensaje automático ignorado para pausa: ${chatId}`);
       return;
     }
 
@@ -669,7 +754,7 @@ client.on('message', async (message) => {
     }
 
     if (message.hasMedia || message.type === 'ptt' || message.type === 'audio') {
-      const reply = 'Ahora mismo no puedo escuchar audios desde aquí. ¿Me lo puede escribir por texto y lo reviso? 😊';
+      const reply = 'Ahora mismo no puedo escuchar audios desde aquí.\n\n¿Me lo puede escribir por texto y lo reviso?';
 
       await sleep(humanDelay(reply));
       await sendDanielaMessage(from, reply);
@@ -687,6 +772,11 @@ client.on('message', async (message) => {
 
     if (!text) return;
 
+    if (asksForFlyer(text)) {
+      await sendFlyerIfUseful(from, text);
+      await sleep(1200);
+    }
+
     let chat;
 
     try {
@@ -700,7 +790,10 @@ client.on('message', async (message) => {
 
     await sleep(humanDelay(response));
     await sendDanielaMessage(from, response);
-    await sendFlyerIfUseful(from, text);
+
+    if (!asksForFlyer(text)) {
+      await sendFlyerIfUseful(from, text);
+    }
 
     console.log(`Respuesta enviada a ${from}`);
 
@@ -772,5 +865,5 @@ app.listen(PORT, () => {
 
 client.initialize().catch((error) => {
   whatsappStatus = 'initialize_error';
-  console.error('❌ Error inicializando WhatsApp:', error?.stack || error?.message || error);
+  console.error('Error inicializando WhatsApp:', error?.stack || error?.message || error);
 });
