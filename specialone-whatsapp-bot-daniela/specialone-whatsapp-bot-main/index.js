@@ -1,8 +1,9 @@
-const fs = require('fs');const path = require('path');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
+const fs = require('fs');const path = require('path');const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const express = require('express');
 const OpenAI = require('openai');
+
+
 
 
 const app = express();
@@ -11,13 +12,19 @@ const AUTH_PATH = process.env.WHATSAPP_AUTH_PATH || '/app/.wwebjs_auth';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 
 
+
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
 
+
+
 let qrImage = '';
 let whatsappStatus = 'starting';
+
+
 
 
 const conversations = new Map();
@@ -27,15 +34,21 @@ const recentBotBodies = new Map();
 const activationGraceUntil = new Map();
 
 
+
+
 const CEO_NUMBERS = [
   '34637993550@c.us',
   '34644287792@c.us'
 ];
 
 
+
+
 const TRAINING_FORM = 'https://tally.so/r/NpMjqB';
 const INDIVIDUAL_TRAINING_FORM = 'https://tally.so/r/lbxql6';
 const INTERNATIONAL_FORM = 'https://tally.so/r/pbREOV';
+
+
 
 
 const FLYER_PATHS = [
@@ -46,15 +59,23 @@ const FLYER_PATHS = [
 ];
 
 
+
+
 function cleanChromiumLocks(dir) {
   if (!fs.existsSync(dir)) return;
+
+
 
 
   const lockFiles = ['SingletonLock', 'SingletonSocket', 'SingletonCookie'];
 
 
+
+
   function scan(currentPath) {
     let items = [];
+
+
 
 
     try {
@@ -65,14 +86,20 @@ function cleanChromiumLocks(dir) {
     }
 
 
+
+
     for (const item of items) {
       const fullPath = path.join(currentPath, item.name);
+
+
 
 
       if (item.isDirectory()) {
         scan(fullPath);
         continue;
       }
+
+
 
 
       if (lockFiles.includes(item.name)) {
@@ -87,11 +114,17 @@ function cleanChromiumLocks(dir) {
   }
 
 
+
+
   scan(dir);
 }
 
 
+
+
 cleanChromiumLocks(AUTH_PATH);
+
+
 
 
 const client = new Client({
@@ -118,9 +151,13 @@ const client = new Client({
 });
 
 
+
+
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
+
+
 
 
 function normalizeText(text) {
@@ -131,6 +168,8 @@ function normalizeText(text) {
 }
 
 
+
+
 function humanDelay(text) {
   const length = (text || '').length;
   const base = 900;
@@ -139,17 +178,25 @@ function humanDelay(text) {
 }
 
 
+
+
 function splitDanielaMessages(text) {
   const clean = (text || '').replace(/\r/g, '').trim();
 
 
+
+
   if (!clean) return [];
+
+
 
 
   return clean
     .split(/\n{2,}/)
     .flatMap(block => {
       if (block.length <= 115) return [block];
+
+
 
 
       return block
@@ -163,11 +210,17 @@ function splitDanielaMessages(text) {
 }
 
 
+
+
 function normalizePhone(raw) {
   if (!raw) return null;
 
 
+
+
   let digits = raw.replace(/\D/g, '');
+
+
 
 
   if (digits.startsWith('00')) digits = digits.slice(2);
@@ -175,13 +228,19 @@ function normalizePhone(raw) {
   if (digits.length === 9) return `34${digits}@c.us`;
 
 
+
+
   return null;
 }
+
+
 
 
 function pauseChat(chatId, hours = 2) {
   pausedChats.set(chatId, Date.now() + hours * 60 * 60 * 1000);
 }
+
+
 
 
 function activateChat(chatId) {
@@ -190,11 +249,17 @@ function activateChat(chatId) {
 }
 
 
+
+
 function isActivationGrace(chatId) {
   const until = activationGraceUntil.get(chatId);
 
 
+
+
   if (!until) return false;
+
+
 
 
   if (Date.now() > until) {
@@ -203,15 +268,23 @@ function isActivationGrace(chatId) {
   }
 
 
+
+
   return true;
 }
+
+
 
 
 function isPaused(chatId) {
   const until = pausedChats.get(chatId);
 
 
+
+
   if (!until) return false;
+
+
 
 
   if (Date.now() > until) {
@@ -220,19 +293,29 @@ function isPaused(chatId) {
   }
 
 
+
+
   return true;
 }
+
+
 
 
 function markBotMessage(chatId, body) {
   botSentMessages.set(chatId, Date.now());
 
 
+
+
   if (!body) return;
+
+
 
 
   const key = normalizeText(body).slice(0, 180);
   recentBotBodies.set(key, Date.now());
+
+
 
 
   setTimeout(() => {
@@ -241,17 +324,25 @@ function markBotMessage(chatId, body) {
 }
 
 
+
+
 function wasRecentlySentByBot(chatId, body) {
   const last = botSentMessages.get(chatId);
   if (last && Date.now() - last < 90000) return true;
+
+
 
 
   const key = normalizeText(body).slice(0, 180);
   const bodyTime = recentBotBodies.get(key);
 
 
+
+
   return Boolean(bodyTime && Date.now() - bodyTime < 90000);
 }
+
+
 
 
 async function sendRawMessage(chatId, text) {
@@ -260,8 +351,12 @@ async function sendRawMessage(chatId, text) {
 }
 
 
+
+
 async function sendDanielaMessage(chatId, text) {
   const parts = splitDanielaMessages(text);
+
+
 
 
   for (const part of parts) {
@@ -271,13 +366,19 @@ async function sendDanielaMessage(chatId, text) {
 }
 
 
+
+
 function getFlyerPath() {
   return FLYER_PATHS.find(filePath => fs.existsSync(filePath));
 }
 
 
+
+
 function asksForFlyer(text) {
   const t = normalizeText(text);
+
+
 
 
   return (
@@ -291,8 +392,12 @@ function asksForFlyer(text) {
 }
 
 
+
+
 function shouldSendFlyer(text) {
   const t = normalizeText(text);
+
+
 
 
   return (
@@ -310,17 +415,25 @@ function shouldSendFlyer(text) {
 }
 
 
+
+
 async function sendFlyerIfUseful(chatId, text) {
   if (!shouldSendFlyer(text)) return false;
 
 
+
+
   const flyerPath = getFlyerPath();
+
+
 
 
   if (!flyerPath) {
     console.log('Cartel no encontrado. Sube domingos-tecnificacion.jpg junto a index.js');
     return false;
   }
+
+
 
 
   try {
@@ -338,9 +451,13 @@ async function sendFlyerIfUseful(chatId, text) {
 }
 
 
+
+
 function isEnglish(text) {
   return /\b(hello|hi|price|training|academy|football|soccer|player|schedule|where|how much|english|international|information|register|sign up|camp|clinic|form|submitted|application|confirmation)\b/i.test(text);
 }
+
+
 
 
 function getMadridHour() {
@@ -354,14 +471,20 @@ function getMadridHour() {
 }
 
 
+
+
 function isOutOfHours() {
   const hour = getMadridHour();
   return hour >= 22 || hour < 9;
 }
 
 
+
+
 function isSubmittedFormMessage(text) {
   const t = normalizeText(text);
+
+
 
 
   const spanishSubmitted = (
@@ -378,11 +501,15 @@ function isSubmittedFormMessage(text) {
   );
 
 
+
+
   const spanishForm = (
     t.includes('formulario') ||
     t.includes('inscripcion') ||
     t.includes('solicitud')
   );
+
+
 
 
   const englishSubmitted = (
@@ -396,12 +523,16 @@ function isSubmittedFormMessage(text) {
   );
 
 
+
+
   const englishForm = (
     t.includes('form') ||
     t.includes('registration') ||
     t.includes('application') ||
     t.includes('request')
   );
+
+
 
 
   return (
@@ -412,18 +543,26 @@ function isSubmittedFormMessage(text) {
 }
 
 
+
+
 function submittedFormReply(text) {
   if (isEnglish(text)) {
     return 'Perfect, thank you.\n\nWe have received your request.\n\nWe will now review it and let you know the next steps.';
   }
 
 
+
+
   return 'Perfecto, gracias.\n\nHemos recibido su solicitud correctamente.\n\nAhora la revisamos y le iremos informando de los siguientes pasos.';
 }
 
 
+
+
 function wantsForm(text) {
   const t = normalizeText(text);
+
+
 
 
   return (
@@ -444,8 +583,12 @@ function wantsForm(text) {
 }
 
 
+
+
 function detectProgram(text) {
   const t = normalizeText(text);
+
+
 
 
   if (
@@ -459,6 +602,8 @@ function detectProgram(text) {
   ) {
     return 'individual';
   }
+
+
 
 
   if (
@@ -475,6 +620,8 @@ function detectProgram(text) {
   }
 
 
+
+
   if (
     t.includes('clinic') ||
     t.includes('clinics') ||
@@ -487,6 +634,8 @@ function detectProgram(text) {
   ) {
     return 'experience';
   }
+
+
 
 
   if (
@@ -504,13 +653,19 @@ function detectProgram(text) {
   }
 
 
+
+
   return null;
 }
+
+
 
 
 function formReply(text) {
   const program = detectProgram(text);
   const english = isEnglish(text);
+
+
 
 
   if (program === 'individual') {
@@ -519,8 +674,12 @@ function formReply(text) {
     }
 
 
+
+
     return `Sí, para entrenamiento individual puede completar este formulario:\n\n${INDIVIDUAL_TRAINING_FORM}\n\nCuando lo recibamos, revisamos la solicitud antes de confirmar nada.`;
   }
+
+
 
 
   if (program === 'international') {
@@ -529,8 +688,12 @@ function formReply(text) {
     }
 
 
+
+
     return `Sí, para International Experience puede completar este formulario:\n\n${INTERNATIONAL_FORM}\n\nCuando lo recibamos, revisamos la solicitud y le indicamos los siguientes pasos.`;
   }
+
+
 
 
   if (program === 'experience') {
@@ -539,8 +702,12 @@ function formReply(text) {
     }
 
 
+
+
     return 'Para Special One Experience solo abrimos formulario cuando hay un clinic activo.\n\nAhora mismo dígame qué clinic le interesa y lo revisamos con usted.';
   }
+
+
 
 
   if (program === 'training') {
@@ -549,8 +716,12 @@ function formReply(text) {
     }
 
 
+
+
     return `Sí, para Special One Training puede completar este formulario:\n\n${TRAINING_FORM}\n\nCuando lo recibamos, revisamos disponibilidad antes de confirmar nada.`;
   }
+
+
 
 
   if (english) {
@@ -558,13 +729,19 @@ function formReply(text) {
   }
 
 
+
+
   return 'Para pasarle el formulario correcto, dígame para qué programa es: Training, Entrenamiento Individual, International Experience o Experience.';
 }
+
+
 
 
 function shouldHandleFormDirectly(text) {
   return isSubmittedFormMessage(text) || wantsForm(text);
 }
+
+
 
 
 function directFormResponse(text) {
@@ -573,8 +750,12 @@ function directFormResponse(text) {
 }
 
 
+
+
 function shouldAlertCEO(text) {
   const t = normalizeText(text);
+
+
 
 
   return (
@@ -600,6 +781,26 @@ function shouldAlertCEO(text) {
     t.includes('otra persona') ||
     t.includes('audio') ||
     t.includes('nota de voz') ||
+    t.includes('incluido') ||
+    t.includes('incluida') ||
+    t.includes('incluye') ||
+    t.includes('servicios incluidos') ||
+    t.includes('esta incluido') ||
+    t.includes('está incluido') ||
+    t.includes('visado') ||
+    t.includes('visa') ||
+    t.includes('alojamiento') ||
+    t.includes('transporte') ||
+    t.includes('condiciones') ||
+    t.includes('cancelacion') ||
+    t.includes('cancelación') ||
+    t.includes('paquete personalizado') ||
+    t.includes('programa personalizado') ||
+    t.includes('modificar paquete') ||
+    t.includes('modificar programa') ||
+    t.includes('disponibilidad real') ||
+    t.includes('fechas cerradas') ||
+    t.includes('horarios cerrados') ||
     (t.includes('club') && t.includes('acuerdo')) ||
     t.includes('colaboracion') ||
     t.includes('colaboración') ||
@@ -609,8 +810,12 @@ function shouldAlertCEO(text) {
 }
 
 
+
+
 function basicFallback(text) {
   const t = normalizeText(text);
+
+
 
 
   if (isSubmittedFormMessage(text)) {
@@ -618,9 +823,20 @@ function basicFallback(text) {
   }
 
 
+
+
   if (wantsForm(text)) {
     return formReply(text);
   }
+
+
+
+
+  if (t.includes('beca') || t.includes('ayuda economica') || t.includes('ayuda económica')) {
+    return 'Ahora mismo no tenemos becas ni ayudas económicas.';
+  }
+
+
 
 
   if (isEnglish(text)) {
@@ -628,9 +844,13 @@ function basicFallback(text) {
   }
 
 
+
+
   if (asksForFlyer(text)) {
     return 'Sí, se lo paso ahora.';
   }
+
+
 
 
   if (t.includes('hola') || t.includes('buenas')) {
@@ -638,9 +858,13 @@ function basicFallback(text) {
   }
 
 
+
+
   if (t.includes('precio') || t.includes('cuanto') || t.includes('cuánto') || t.includes('tarifa')) {
     return 'Domingos de Tecnificación:\n\n1 sesión: 19,90 €\n2 sesiones: 34,95 €\n4 sesiones: 64,90 €';
   }
+
+
 
 
   if (t.includes('horario') || t.includes('cuando') || t.includes('cuándo')) {
@@ -648,9 +872,13 @@ function basicFallback(text) {
   }
 
 
+
+
   if (t.includes('ropa') || t.includes('equipacion') || t.includes('equipación')) {
-    return 'Para tecnificación no es obligatorio comprar la ropa oficial desde el primer día.\n\nSí recomendamos tenerla para que todos vayan uniformados.\n\nSe puede adquirir en Soccerfactory, en el Polígono PISA de Mairena.';
+    return 'Para tecnificación no es obligatorio comprar la ropa oficial desde el primer día.\n\nSí recomendamos tenerla para que todos vayan uniformados.\n\nLa ropa no se devuelve. Si la compra el jugador o se la damos nosotros, es del jugador.';
   }
+
+
 
 
   if (t.includes('individual') || t.includes('solo') || t.includes('entrenador')) {
@@ -658,9 +886,13 @@ function basicFallback(text) {
   }
 
 
+
+
   if (t.includes('portero') || t.includes('porteros')) {
     return 'Sí, también trabajamos con porteros.\n\nEl trabajo se adapta a su posición: blocaje, caídas, desplazamientos, juego aéreo y acciones reales.';
   }
+
+
 
 
   if (t.includes('ubicacion') || t.includes('ubicación') || t.includes('donde') || t.includes('dónde')) {
@@ -668,9 +900,13 @@ function basicFallback(text) {
   }
 
 
+
+
   if (t.includes('apuntar') || t.includes('inscripcion') || t.includes('inscripción') || t.includes('reservar')) {
     return formReply(text);
   }
+
+
 
 
   if (t.includes('domingo') || t.includes('tecnificacion') || t.includes('tecnificación')) {
@@ -678,33 +914,51 @@ function basicFallback(text) {
   }
 
 
+
+
   return 'Perfecto.\n\nCuénteme un poco qué necesita y le oriento.';
 }
+
+
 
 
 async function alertCEOs({ from, userMessage, reason, aiResponse }) {
   const cleanPhone = from.replace('@c.us', '').replace('@lid', '');
 
 
+
+
   const alertText =
 `DANIELA - AVISO A DIRECCIÓN
+
+
 
 
 Motivo: ${reason}
 
 
+
+
 Cliente: ${from}
+
+
 
 
 Mensaje recibido:
 "${userMessage}"
 
 
+
+
 Respuesta de Daniela:
 "${aiResponse || 'Pendiente'}"
 
 
+
+
 El chat queda pausado durante 2 horas.
+
+
 
 
 Para reactivar Daniela en este chat:
@@ -712,8 +966,12 @@ Desde el WhatsApp de empresa:
 /activar
 
 
+
+
 Desde vuestro móvil personal al WhatsApp empresa:
 /activar ${cleanPhone}`;
+
+
 
 
   for (const ceo of CEO_NUMBERS) {
@@ -726,6 +984,8 @@ Desde vuestro móvil personal al WhatsApp empresa:
 }
 
 
+
+
 async function safeOpenAIRequest(payload) {
   return Promise.race([
     openai.chat.completions.create(payload),
@@ -736,17 +996,141 @@ async function safeOpenAIRequest(payload) {
 }
 
 
+
+
 async function getDanielaResponse(from, text) {
   const history = conversations.get(from) || [];
   const outOfHours = isOutOfHours();
   const english = isEnglish(text);
 
 
+
+
   const systemPrompt = `
 Eres Daniela, atención al cliente de Special One Academy por WhatsApp.
 
 
+
+
 Hablas como una persona real del equipo. No como chatbot.
+
+
+
+
+REGLA PRINCIPAL DE PRECISIÓN:
+Daniela nunca debe asumir, completar, interpretar ni inventar información que no esté definida explícitamente en su memoria oficial.
+
+La prioridad siempre es:
+PRECISIÓN > RAPIDEZ
+
+Si hay conflicto entre ser resolutiva y ser precisa, siempre prioriza la precisión.
+
+Antes de responder sobre cualquier aspecto operativo, comercial o logístico, comprueba mentalmente:
+1. ¿Tengo esta información definida explícitamente?
+2. ¿Está vigente?
+3. ¿Estoy respondiendo con un dato confirmado o con una suposición?
+
+Si hay cualquier duda, no respondas como si supieras la respuesta.
+Deriva al equipo con [[AVISAR_CEO]].
+
+Temas especialmente sensibles:
+- Precios.
+- Descuentos.
+- Promociones.
+- Equipaciones.
+- Qué material se entrega o se devuelve.
+- Disponibilidad.
+- Horarios definitivos.
+- Fechas.
+- Plazas.
+- Entrenadores asignados.
+- Clubes colaboradores.
+- Partidos.
+- Alojamientos.
+- Transporte.
+- Visados.
+- Servicios incluidos.
+- Condiciones de cancelación.
+- Duración de programas.
+- Cambios personalizados en programas.
+- Aspectos contractuales o comerciales.
+
+Nunca uses estas expresiones para completar información que no esté confirmada:
+- "Normalmente..."
+- "Generalmente..."
+- "Lo habitual es..."
+- "Seguramente..."
+- "Probablemente..."
+- "Creo que..."
+- "Debería..."
+- "Lo más común es..."
+
+Nunca transformes una suposición en una respuesta comercial.
+Nunca inventes una política para parecer resolutiva.
+Nunca completes información faltante con conocimiento general.
+
+Cuando falte información confirmada, responde de forma breve y profesional:
+"Para darte una respuesta totalmente correcta, necesitamos confirmar este punto con nuestro equipo.
+
+En cuanto lo tengamos revisado, te responderemos con la información definitiva."
+
+No digas:
+- "No sé."
+- "No tengo esa información."
+- "Pregúntale a otra persona."
+
+Becas y ayudas económicas:
+No tenemos becas ni ayudas económicas.
+Si preguntan por becas o ayudas económicas, responde de forma breve que ahora mismo no tenemos becas ni ayudas económicas.
+No inventes alternativas, condiciones especiales ni descuentos.
+
+Ropa y equipaciones:
+La ropa no se devuelve.
+Si la compra el jugador o se la damos nosotros, es del jugador.
+Nunca digas que la ropa es solo para usar durante el programa.
+Nunca digas que normalmente no se la quedan.
+Nunca inventes precios de ropa.
+
+CASO ESPECIAL: SPECIAL ONE INTERNATIONAL EXPERIENCE
+En programas internacionales debes ser especialmente estricta.
+
+Nunca inventes:
+- Precios.
+- Horarios.
+- Clubes.
+- Partidos.
+- Equipaciones.
+- Alojamientos.
+- Visados.
+- Servicios incluidos.
+- Duración.
+- Disponibilidad.
+- Calendarios.
+- Programas personalizados.
+
+Cada experiencia internacional puede depender de:
+- Edad.
+- Año de nacimiento.
+- Fechas de estancia.
+- Entrenamientos disponibles.
+- Calendario de partidos.
+- Club colaborador.
+- Servicios contratados.
+
+Si el usuario solicita cualquier detalle internacional que no esté expresamente definido, escala con [[AVISAR_CEO]].
+
+Sí puedes responder directamente cuando la información esté claramente definida:
+- Teléfono oficial.
+- Web oficial.
+- Ubicación.
+- Nombre de programas.
+- Filosofía de la academia.
+- Tarifas oficiales registradas.
+- Horarios oficiales registrados.
+- Condiciones expresamente definidas.
+- Información publicada y vigente.
+
+
 
 
 Reglas de escritura:
@@ -773,6 +1157,8 @@ Reglas de escritura:
 - Si no sabes algo, dilo y deriva.
 
 
+
+
 Actitud:
 Tranquila, cercana, profesional.
 No presiones.
@@ -780,8 +1166,12 @@ No intentes cerrar reserva en cada mensaje.
 Primero ayuda. Después guía.
 
 
+
+
 Estado actual:
 La Pre Pretemporada ya terminó. No la vendas como programa activo.
+
+
 
 
 Programas actuales:
@@ -791,8 +1181,12 @@ Programas actuales:
 - Entrenamiento individual: Special One Individual Training.
 
 
+
+
 Programa principal:
 Domingos de Tecnificación 2026/27.
+
+
 
 
 Datos del programa:
@@ -812,8 +1206,12 @@ Datos del programa:
 - Comprensión del juego.
 
 
+
+
 No vendas este programa como preparación física.
 No lo vendas como entrenamiento táctico colectivo.
+
+
 
 
 Horarios:
@@ -822,10 +1220,14 @@ Horarios:
 11:00 a 12:00
 
 
+
+
 Tarifas:
 1 sesión: 19,90 €
 2 sesiones: 34,95 €
 4 sesiones: 64,90 €
+
+
 
 
 Reservas:
@@ -835,11 +1237,15 @@ Nunca confirmes plaza.
 Di que comprobamos disponibilidad antes de confirmar.
 
 
+
+
 Formularios:
 Special One Training: ${TRAINING_FORM}
 Special One Individual Training: ${INDIVIDUAL_TRAINING_FORM}
 Special One International Experience: ${INTERNATIONAL_FORM}
 Special One Experience: no hay formulario activo salvo que haya un clinic abierto.
+
+
 
 
 Si el cliente dice que ya ha completado, enviado o rellenado un formulario:
@@ -852,7 +1258,11 @@ Si el cliente dice que ya ha completado, enviado o rellenado un formulario:
 - Responde en el mismo idioma del cliente.
 
 
+
+
 No envíes el formulario al primer mensaje salvo que el cliente lo pida o quiera reservar claramente.
+
+
 
 
 Si pide formulario o quiere inscribirse:
@@ -865,12 +1275,16 @@ Si pide formulario o quiere inscribirse:
 - Nunca confirmes plaza por enviar o recibir formulario.
 
 
+
+
 Flujo humano de reserva:
 Primero habla normal.
 Si quiere reservar, pide solo dos datos:
 "¿Es jugador o portero? ¿Y qué año de nacimiento tiene?"
 Después puedes pedir club, posición, domingos deseados y horario preferido.
 No pidas todo de golpe.
+
+
 
 
 Sesiones individuales:
@@ -880,9 +1294,13 @@ Las sesiones individuales existen, pero se gestionan aparte y tienen otro formul
 Formulario sesiones individuales: ${INDIVIDUAL_TRAINING_FORM}
 
 
+
+
 Porteros:
 Sí hay trabajo para porteros.
 Adapta la explicación: blocaje, caídas, desplazamientos, juego aéreo, coordinación, golpeo y situaciones reales.
+
+
 
 
 Ropa oficial:
@@ -890,7 +1308,11 @@ Para tecnificación no es obligatorio comprar la ropa oficial desde el primer d�
 Sí recomendamos adquirirla para que todos vayan uniformados.
 La ropa oficial se puede comprar en Soccerfactory Sevilla Aljarafe.
 Dirección pública: C/ Nobel, 6, Nave 1, Parque P.I.S.A., Mairena del Aljarafe, Sevilla.
+La ropa no se devuelve.
+Si la compra el jugador o se la damos nosotros, es del jugador.
 No inventes precios de ropa.
+
+
 
 
 Entre semana:
@@ -900,6 +1322,8 @@ Todavía no hay día ni horario oficial.
 No inventes fechas.
 
 
+
+
 Si preguntan por cartel o imagen:
 No digas que no tienes cartel.
 Di algo corto como:
@@ -907,19 +1331,28 @@ Di algo corto como:
 El sistema enviará la imagen.
 
 
+
+
 Programa internacional:
 Special One International Experience.
 Para futbolistas internacionales.
 Puede incluir entrenamientos individuales, entrenamientos grupales, partidos en ligas privadas no federadas, evaluación técnica final, certificado y equipación.
 Nunca prometas pruebas, fichajes ni representación.
+No inventes precios, duración, disponibilidad, alojamientos, visados, horarios, clubes, partidos ni servicios incluidos.
 Formulario internacional: ${INTERNATIONAL_FORM}
 
 
+
+
 Deriva a dirección con [[AVISAR_CEO]] si hay:
-quejas, descuentos, incidencias, acuerdos con clubes, colaboraciones, prensa, temas legales, cliente molesto o petición especial.
+quejas, descuentos, incidencias, acuerdos con clubes, colaboraciones, prensa, temas legales, cliente molesto, petición especial, precios no definidos, modificación de paquetes, servicios incluidos no definidos, condiciones especiales, visados, alojamiento, transporte, disponibilidad real, fechas no cerradas u horarios no cerrados.
+
+
 
 
 Ejemplos de tono:
+
+
 
 
 Cliente: "Buenas tardes"
@@ -929,11 +1362,15 @@ Daniela:
 "¿En qué puedo ayudarle?"
 
 
+
+
 Cliente: "Quería informarme"
 Daniela:
 "Sí."
 "Ahora mismo tenemos abiertos los Domingos de Tecnificación."
 "Empiezan en octubre, en Club Río Grande."
+
+
 
 
 Cliente: "Solo tenéis sesiones individuales?"
@@ -943,11 +1380,15 @@ Daniela:
 "Las sesiones individuales van aparte y se organizan directamente con nosotros."
 
 
+
+
 Cliente: "Y los domingos solo?"
 Daniela:
 "De momento sí."
 "Estamos viendo también un día entre semana."
 "Pero depende de los horarios que cierre el Club Río Grande."
+
+
 
 
 Cliente: "La ropa es obligatoria?"
@@ -957,10 +1398,29 @@ Daniela:
 "Se puede adquirir en Soccerfactory, en el Polígono PISA de Mairena."
 
 
+
+
+Cliente: "¿La equipación se devuelve?"
+Daniela:
+"No, la ropa no se devuelve."
+"Si la compra el jugador o se la damos nosotros, es del jugador."
+
+
+
+
+Cliente: "¿Tenéis ayudas económicas?"
+Daniela:
+"Ahora mismo no tenemos becas ni ayudas económicas."
+
+
+
+
 Contexto:
 Fuera de horario: ${outOfHours ? 'SÍ' : 'NO'}
 Inglés detectado: ${english ? 'SÍ' : 'NO'}
 `;
+
+
 
 
   try {
@@ -976,14 +1436,22 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
     });
 
 
+
+
     let response = completion?.choices?.[0]?.message?.content || '';
+
+
 
 
     if (!response.trim()) response = basicFallback(text);
 
 
+
+
     const escalate = response.includes('[[AVISAR_CEO]]') || shouldAlertCEO(text);
     response = response.replace('[[AVISAR_CEO]]', '').trim();
+
+
 
 
     conversations.set(from, [
@@ -993,9 +1461,13 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
     ].slice(-14));
 
 
+
+
     return { response, escalate };
   } catch (error) {
     console.error('OpenAI Daniela error:', error?.stack || error?.message || error);
+
+
 
 
     const response = basicFallback(text);
@@ -1006,9 +1478,13 @@ Inglés detectado: ${english ? 'SÍ' : 'NO'}
     ].slice(-14));
 
 
+
+
     return { response, escalate: shouldAlertCEO(text) };
   }
 }
+
+
 
 
 client.on('qr', async (qr) => {
@@ -1018,9 +1494,13 @@ client.on('qr', async (qr) => {
 });
 
 
+
+
 client.on('loading_screen', (percent, message) => {
   console.log(`Cargando WhatsApp: ${percent}% - ${message}`);
 });
+
+
 
 
 client.on('authenticated', () => {
@@ -1029,10 +1509,14 @@ client.on('authenticated', () => {
 });
 
 
+
+
 client.on('auth_failure', (msg) => {
   whatsappStatus = 'auth_failure';
   console.error('Error de autenticación WhatsApp:', msg);
 });
+
+
 
 
 client.on('ready', () => {
@@ -1044,10 +1528,14 @@ client.on('ready', () => {
 });
 
 
+
+
 client.on('disconnected', (reason) => {
   whatsappStatus = 'disconnected';
   console.error('WhatsApp desconectado:', reason);
 });
+
+
 
 
 client.on('message_create', async (message) => {
@@ -1055,14 +1543,22 @@ client.on('message_create', async (message) => {
     if (!message.fromMe) return;
 
 
+
+
     const chatId = message.to || message.from;
     const body = (message.body || '').trim();
+
+
 
 
     if (!chatId) return;
 
 
+
+
     const cleanBody = normalizeText(body);
+
+
 
 
     if (cleanBody.startsWith('/activar')) {
@@ -1072,16 +1568,22 @@ client.on('message_create', async (message) => {
     }
 
 
+
+
     if (isActivationGrace(chatId)) {
       console.log(`Mensaje ignorado por ventana de activación: ${chatId}`);
       return;
     }
 
 
+
+
     if (wasRecentlySentByBot(chatId, body)) {
       console.log(`Mensaje automático ignorado para pausa: ${chatId}`);
       return;
     }
+
+
 
 
     if (cleanBody.startsWith('/pausar')) {
@@ -1091,10 +1593,14 @@ client.on('message_create', async (message) => {
     }
 
 
+
+
     if (CEO_NUMBERS.includes(chatId)) {
       console.log(`Mensaje hacia CEO ignorado para pausa: ${chatId}`);
       return;
     }
+
+
 
 
     pauseChat(chatId, 2);
@@ -1105,6 +1611,8 @@ client.on('message_create', async (message) => {
 });
 
 
+
+
 client.on('message', async (message) => {
   try {
     const from = message.from;
@@ -1112,15 +1620,23 @@ client.on('message', async (message) => {
     const cleanText = normalizeText(text);
 
 
+
+
     if (!from) return;
     if (message.fromMe) return;
+
+
 
 
     console.log(`Mensaje recibido de ${from}: ${text}`);
 
 
+
+
     if (CEO_NUMBERS.includes(from) && cleanText.startsWith('/activar')) {
       const targetChatId = normalizePhone(text);
+
+
 
 
       if (!targetChatId) {
@@ -1129,14 +1645,20 @@ client.on('message', async (message) => {
       }
 
 
+
+
       activateChat(targetChatId);
       await sendDanielaMessage(from, `Daniela reactivada para el chat ${targetChatId.replace('@c.us', '')}.`);
       return;
     }
 
 
+
+
     if (CEO_NUMBERS.includes(from) && cleanText.startsWith('/pausar')) {
       const targetChatId = normalizePhone(text);
+
+
 
 
       if (!targetChatId) {
@@ -1145,10 +1667,14 @@ client.on('message', async (message) => {
       }
 
 
+
+
       pauseChat(targetChatId, 2);
       await sendDanielaMessage(from, `Daniela pausada durante 2 horas para el chat ${targetChatId.replace('@c.us', '')}.`);
       return;
     }
+
+
 
 
     if (isPaused(from)) {
@@ -1157,12 +1683,18 @@ client.on('message', async (message) => {
     }
 
 
+
+
     if (message.hasMedia || message.type === 'ptt' || message.type === 'audio') {
       const reply = 'Ahora mismo no puedo escuchar audios desde aquí.\n\n¿Me lo puede escribir por texto y lo reviso?';
 
 
+
+
       await sleep(humanDelay(reply));
       await sendDanielaMessage(from, reply);
+
+
 
 
       await alertCEOs({
@@ -1173,12 +1705,18 @@ client.on('message', async (message) => {
       });
 
 
+
+
       pauseChat(from, 2);
       return;
     }
 
 
+
+
     if (!text) return;
+
+
 
 
     if (asksForFlyer(text)) {
@@ -1187,12 +1725,18 @@ client.on('message', async (message) => {
     }
 
 
+
+
     if (shouldHandleFormDirectly(text)) {
       const reply = directFormResponse(text);
 
 
+
+
       await sleep(humanDelay(reply));
       await sendDanielaMessage(from, reply);
+
+
 
 
       console.log(`Respuesta de formulario enviada a ${from}`);
@@ -1200,7 +1744,11 @@ client.on('message', async (message) => {
     }
 
 
+
+
     let chat;
+
+
 
 
     try {
@@ -1211,11 +1759,17 @@ client.on('message', async (message) => {
     }
 
 
+
+
     const { response, escalate } = await getDanielaResponse(from, text);
+
+
 
 
     await sleep(humanDelay(response));
     await sendDanielaMessage(from, response);
+
+
 
 
     if (!asksForFlyer(text)) {
@@ -1223,7 +1777,11 @@ client.on('message', async (message) => {
     }
 
 
+
+
     console.log(`Respuesta enviada a ${from}`);
+
+
 
 
     if (chat) {
@@ -1235,6 +1793,8 @@ client.on('message', async (message) => {
     }
 
 
+
+
     if (escalate) {
       await alertCEOs({
         from,
@@ -1244,10 +1804,14 @@ client.on('message', async (message) => {
       });
 
 
+
+
       pauseChat(from, 2);
     }
   } catch (error) {
     console.error('Error Daniela completo:', error?.stack || error?.message || error);
+
+
 
 
     try {
@@ -1261,9 +1825,13 @@ client.on('message', async (message) => {
 });
 
 
+
+
 app.get('/', (req, res) => {
   res.send(`Daniela activa | Estado WhatsApp: ${whatsappStatus}`);
 });
+
+
 
 
 app.get('/health', (req, res) => {
@@ -1277,10 +1845,14 @@ app.get('/health', (req, res) => {
 });
 
 
+
+
 app.get('/qr', (req, res) => {
   if (!qrImage) {
     return res.send(`QR aún no generado o WhatsApp ya está vinculado. Estado actual: ${whatsappStatus}`);
   }
+
+
 
 
   res.send(`
@@ -1296,9 +1868,13 @@ app.get('/qr', (req, res) => {
 });
 
 
+
+
 app.listen(PORT, () => {
   console.log('Servidor web activo en puerto', PORT);
 });
+
+
 
 
 client.initialize().catch((error) => {
