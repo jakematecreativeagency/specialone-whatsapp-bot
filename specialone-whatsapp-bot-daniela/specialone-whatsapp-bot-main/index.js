@@ -1116,7 +1116,7 @@ client.on('message_create', async (message) => {
 
     if (!chatId) return;
 
-    if (chatId === 'status@broadcast' || chatId.endsWith('@broadcast') || !chatId.endsWith('@c.us')) {
+    if (isSystemOrGroupChatId(chatId) || !isPrivateClientChatId(chatId)) {
       console.log(`Mensaje propio ignorado por no ser chat privado de cliente: ${chatId}`);
       return;
     }
@@ -1166,12 +1166,12 @@ client.on('message', async (message) => {
     if (!from) return;
     if (message.fromMe) return;
 
-    if (from === 'status@broadcast' || from.endsWith('@broadcast')) {
+    if (isSystemOrGroupChatId(from)) {
       console.log('Mensaje de estado/broadcast ignorado. Daniela no responde.');
       return;
     }
 
-    if (!from.endsWith('@c.us')) {
+    if (!isPrivateClientChatId(from)) {
       console.log(`Mensaje ignorado por no ser chat privado de cliente: ${from}`);
       return;
     }
